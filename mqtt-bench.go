@@ -6,13 +6,14 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
-	MQTT "git.eclipse.org/gitroot/paho/org.eclipse.paho.mqtt.golang.git"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
 
 const BASE_TOPIC string = "/mqtt-bench/benchmark"
@@ -100,13 +101,13 @@ func CreateClientTlsConfig(rootCAFile string, clientCertFile string, clientKeyFi
 }
 
 // 実行する。
-func Execute(exec func(clients []*MQTT.Client, opts ExecOptions, param ...string) int, opts ExecOptions) {
+func Execute(exec func(clients []MQTT.Client, opts ExecOptions, param ...string) int, opts ExecOptions) {
 	message := CreateFixedSizeMessage(opts.MessageSize)
 
 	// 配列を初期化
 	DefaultHandlerResults = make([]*SubscribeResult, opts.ClientNum)
 
-	clients := make([]*MQTT.Client, opts.ClientNum)
+	clients := make([]MQTT.Client, opts.ClientNum)
 	hasErr := false
 	for i := 0; i < opts.ClientNum; i++ {
 		client := Connect(i, opts)
@@ -122,7 +123,7 @@ func Execute(exec func(clients []*MQTT.Client, opts ExecOptions, param ...string
 		for i := 0; i < len(clients); i++ {
 			client := clients[i]
 			if client != nil {
-				Disconnect(client)
+				client.Disconnect(10)
 			}
 		}
 		return
@@ -140,7 +141,7 @@ func Execute(exec func(clients []*MQTT.Client, opts ExecOptions, param ...string
 	fmt.Printf("%s End benchmark\n", time.Now())
 
 	// 切断に時間がかかるため、非同期で処理を行う。
-	AsyncDisconnect(clients)
+	DisconnectClients(clients)
 
 	// 処理結果を出力する。
 	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
@@ -151,7 +152,7 @@ func Execute(exec func(clients []*MQTT.Client, opts ExecOptions, param ...string
 
 // 全クライアントに対して、publishの処理を行う。
 // 送信したメッセージ数を返す（原則、クライアント数分となる）。
-func PublishAllClient(clients []*MQTT.Client, opts ExecOptions, param ...string) int {
+func PublishAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) int {
 	message := param[0]
 
 	wg := new(sync.WaitGroup)
@@ -187,7 +188,7 @@ func PublishAllClient(clients []*MQTT.Client, opts ExecOptions, param ...string)
 }
 
 // メッセージを送信する。
-func Publish(client *MQTT.Client, topic string, qos byte, retain bool, message string) {
+func Publish(client MQTT.Client, topic string, qos byte, retain bool, message string) {
 	token := client.Publish(topic, qos, retain, message)
 
 	if token.Wait() && token.Error() != nil {
@@ -198,7 +199,7 @@ func Publish(client *MQTT.Client, topic string, qos byte, retain bool, message s
 // 全クライアントに対して、subscribeの処理を行う。
 // 指定されたカウント数分、メッセージを受信待ちする（メッセージが取得できない場合はカウントされない）。
 // この処理では、Publishし続けながら、Subscribeの処理を行う。
-func SubscribeAllClient(clients []*MQTT.Client, opts ExecOptions, param ...string) int {
+func SubscribeAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) int {
 	wg := new(sync.WaitGroup)
 
 	results := make([]*SubscribeResult, len(clients))
@@ -259,11 +260,11 @@ type SubscribeResult struct {
 }
 
 // メッセージを受信する。
-func Subscribe(client *MQTT.Client, topic string, qos byte) *SubscribeResult {
+func Subscribe(client MQTT.Client, topic string, qos byte) *SubscribeResult {
 	var result *SubscribeResult = &SubscribeResult{}
 	result.Count = 0
 
-	var handler MQTT.MessageHandler = func(client *MQTT.Client, msg MQTT.Message) {
+	var handler MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
 		result.Count++
 		if Debug {
 			fmt.Printf("Received message : topic=%s, message=%s\n", msg.Topic(), msg.Payload())
@@ -292,7 +293,7 @@ func CreateFixedSizeMessage(size int) string {
 
 // 指定されたBrokerへ接続し、そのMQTTクライアントを返す。
 // 接続に失敗した場合は nil を返す。
-func Connect(id int, execOpts ExecOptions) *MQTT.Client {
+func Connect(id int, execOpts ExecOptions) MQTT.Client {
 
 	// 複数プロセスで、ClientIDが重複すると、Broker側で問題となるため、
 	// プロセスIDを利用して、IDを割り振る。
@@ -330,7 +331,7 @@ func Connect(id int, execOpts ExecOptions) *MQTT.Client {
 		var result *SubscribeResult = &SubscribeResult{}
 		result.Count = 0
 
-		var handler MQTT.MessageHandler = func(client *MQTT.Client, msg MQTT.Message) {
+		var handler MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
 			result.Count++
 			if Debug {
 				fmt.Printf("Received at defaultHandler : topic=%s, message=%s\n", msg.Topic(), msg.Payload())
@@ -352,24 +353,11 @@ func Connect(id int, execOpts ExecOptions) *MQTT.Client {
 	return client
 }
 
-// 非同期でBrokerとの接続を切断する。
-func AsyncDisconnect(clients []*MQTT.Client) {
-	wg := new(sync.WaitGroup)
-
+// 全てのクライエントがBrokerとの接続を切断する。
+func DisconnectClients(clients []MQTT.Client) {
 	for _, client := range clients {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			Disconnect(client)
-		}()
+		client.Disconnect(10)
 	}
-
-	wg.Wait()
-}
-
-// Brokerとの接続を切断する。
-func Disconnect(client *MQTT.Client) {
-	client.Disconnect(10)
 }
 
 // ファイルの存在チェックを行う。
@@ -388,7 +376,7 @@ func main() {
 	topic := flag.String("topic", BASE_TOPIC, "Base topic")
 	username := flag.String("broker-username", "", "Username for connecting to the MQTT broker")
 	password := flag.String("broker-password", "", "Password for connecting to the MQTT broker")
-	tls := flag.String("tls", "", "TLS mode. 'server:certFile' or 'client:rootCAFile,clientCertFile,clientKeyFile'")
+	tlsMode := flag.String("tls", "", "TLS mode. 'server:certFile' or 'client:rootCAFile,clientCertFile,clientKeyFile'")
 	clients := flag.Int("clients", 10, "Number of clients")
 	count := flag.Int("count", 100, "Number of loops per client")
 	size := flag.Int("size", 1024, "Message size per publish (byte)")
@@ -425,10 +413,10 @@ func main() {
 
 	// parse TLS mode
 	var certConfig CertConfig = nil
-	if *tls == "" {
+	if *tlsMode == "" {
 		// nil
-	} else if strings.HasPrefix(*tls, "server:") {
-		var strArray = strings.Split(*tls, "server:")
+	} else if strings.HasPrefix(*tlsMode, "server:") {
+		var strArray = strings.Split(*tlsMode, "server:")
 		serverCertFile := strings.TrimSpace(strArray[1])
 		if FileExists(serverCertFile) == false {
 			fmt.Printf("File is not found. : certFile -> %s\n", serverCertFile)
@@ -437,8 +425,8 @@ func main() {
 
 		certConfig = ServerCertConfig{
 			ServerCertFile: serverCertFile}
-	} else if strings.HasPrefix(*tls, "client:") {
-		var strArray = strings.Split(*tls, "client:")
+	} else if strings.HasPrefix(*tlsMode, "client:") {
+		var strArray = strings.Split(*tlsMode, "client:")
 		var configArray = strings.Split(strArray[1], ",")
 		rootCAFile := strings.TrimSpace(configArray[0])
 		clientCertFile := strings.TrimSpace(configArray[1])

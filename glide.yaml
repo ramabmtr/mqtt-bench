@@ -1,0 +1,4 @@
+package: mqtt-bench
+import:
+- package: github.com/eclipse/paho.mqtt.golang
+  version: v1.1.0
