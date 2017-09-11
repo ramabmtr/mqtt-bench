@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -38,7 +39,7 @@ type ExecOptions struct {
 	UseDefaultHandler bool       // Whether to use the default MessageHandler instead of Subscriber individually
 	PreTime           int        // Wait time before execution (ms)
 	IntervalTime      int        // Execution interval time for each message (ms)
-
+	CleanSession      bool       // Use MQTT clean session or not
 }
 
 // Authentication settings
@@ -305,6 +306,7 @@ func Connect(id int, execOpts ExecOptions) MQTT.Client {
 	opts := MQTT.NewClientOptions()
 	opts.AddBroker(execOpts.Broker)
 	opts.SetClientID(clientId)
+	opts.SetCleanSession(execOpts.CleanSession)
 
 	if execOpts.Username != "" {
 		opts.SetUsername(execOpts.Username)
@@ -386,6 +388,7 @@ func main() {
 	preTime := flag.Int("pretime", 3000, "Pre wait time (ms)")
 	intervalTime := flag.Int("intervaltime", 0, "Interval time per message (ms)")
 	debug := flag.Bool("x", false, "Debug mode")
+	cleanSess := flag.Bool("clean-session", false, "MQTT clean session mode")
 
 	flag.Parse()
 
@@ -468,8 +471,11 @@ func main() {
 	execOpts.UseDefaultHandler = *useDefaultHandler
 	execOpts.PreTime = *preTime
 	execOpts.IntervalTime = *intervalTime
+	execOpts.CleanSession = *cleanSess
 
 	Debug = *debug
+
+	MQTT.ERROR = log.New(os.Stderr, "MQTT_ERR:", log.LstdFlags)
 
 	switch method {
 	case "pub":

@@ -84,6 +84,7 @@ Usage of mqtt-bench
   -pretime=3000                               : Pre wait time (ms)
   -intervaltime=0                             : Interval time per message (ms)
   -x=false                                    : Debug mode
+  -clean-session=false                        : MQTT clean session mode
 ```
 
 ## Note
